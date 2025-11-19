@@ -1,0 +1,8 @@
+{
+  "name": "Lost&Found",
+  "description": "A futuristic command center for missing person recovery using Gemini Vision API to analyze crowd footage and match against missing person reports.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
