@@ -5,7 +5,8 @@ export interface Person {
   age: string;
   lastSeenLocation: string;
   lastSeenDate: string;
-  description: string;
+  lastSeenClothing: string; // New field for user-reported clothing
+  description: string; // Biometric description (AI generated, excluding clothes)
   imageUrl: string; // Base64 or URL
   status: 'MISSING' | 'FOUND' | 'SIGHTED';
 }
@@ -16,6 +17,7 @@ export interface MatchResult {
   description: string;
   timestamp: string;
   locationContext?: string;
+  boundingBox?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized 0-1000
 }
 
 export enum AppView {

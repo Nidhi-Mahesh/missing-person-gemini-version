@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { Report } from './pages/Report';
@@ -14,7 +13,8 @@ const MOCK_PEOPLE: Person[] = [
     age: '24',
     lastSeenLocation: 'Central Station, Platform 4',
     lastSeenDate: '2024-05-12',
-    description: 'Female, blonde hair tied back, wearing a red hoodie and blue jeans. Carrying a black backpack.',
+    lastSeenClothing: 'Red hoodie, blue denim jeans, white sneakers',
+    description: 'Female, long blonde hair, slim build.',
     imageUrl: 'https://picsum.photos/id/64/400/400',
     status: 'MISSING'
   },
@@ -24,7 +24,8 @@ const MOCK_PEOPLE: Person[] = [
     age: '45',
     lastSeenLocation: 'Downtown Park Entrance',
     lastSeenDate: '2024-05-10',
-    description: 'Male, short dark hair, beard. Wearing a grey suit jacket and glasses.',
+    lastSeenClothing: 'Grey suit jacket, black trousers, glasses',
+    description: 'Male, short dark hair, beard, average build.',
     imageUrl: 'https://picsum.photos/id/91/400/400',
     status: 'FOUND'
   }
@@ -58,14 +59,19 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-200 font-sans">
+    <div className="flex h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
+      {/* Fixed Sidebar */}
       <Navbar currentView={currentView} setView={setView} />
-      <main className="flex-1 h-full overflow-hidden relative">
-        {/* Background ambient glow */}
-        <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-neon-blue/5 rounded-full blur-[100px] pointer-events-none" />
-        <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] bg-neon-red/5 rounded-full blur-[100px] pointer-events-none" />
+      
+      {/* Scrollable Main Content */}
+      <main className="flex-1 h-full overflow-y-auto relative scroll-smooth">
+        {/* Background ambient glow - Fixed position relative to main view */}
+        <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-neon-blue/5 rounded-full blur-[100px] pointer-events-none z-0" />
+        <div className="fixed bottom-0 left-0 w-[500px] h-[500px] bg-neon-red/5 rounded-full blur-[100px] pointer-events-none z-0" />
         
-        {renderView()}
+        <div className="relative z-10 min-h-full">
+            {renderView()}
+        </div>
       </main>
     </div>
   );

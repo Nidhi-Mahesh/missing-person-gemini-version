@@ -1,7 +1,6 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Person, MatchResult } from '../types';
-import { ScanEye, Video, Image as ImageIcon, AlertCircle, CheckCircle, Loader2, Play, Pause, Crosshair, FileUp } from 'lucide-react';
+import { ScanEye, Video, Image as ImageIcon, AlertCircle, CheckCircle, Loader2, Play, Pause, Crosshair, FileUp, Target, Shirt } from 'lucide-react';
 import { scanCrowdForMatch } from '../services/geminiService';
 
 interface ScanProps {
@@ -73,7 +72,8 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
 
     setScanning(true);
     setResult(null);
-    setScanLog(prev => ["Initializing Vector Analysis...", ...prev]);
+    setScanLog(prev => ["Initializing Biometric Vector Analysis...", ...prev]);
+    setScanLog(prev => [`Target Attire Protocol: "${targetPerson.lastSeenClothing}"`, ...prev]);
 
     if (mediaType === 'image') {
         await runImageScan(targetPerson);
@@ -85,7 +85,7 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
   const runImageScan = async (targetPerson: Person) => {
     if (!imageRef.current) return;
 
-    setScanLog(prev => ["Analyzing static image frame...", ...prev]);
+    setScanLog(prev => ["Analyzing static image frame for keypoints...", ...prev]);
     
     // Small delay to ensure UI renders
     await new Promise(r => setTimeout(r, 500));
@@ -98,7 +98,7 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
     }
 
     try {
-        const analysis = await scanCrowdForMatch(targetPerson.imageUrl, frameBase64);
+        const analysis = await scanCrowdForMatch(targetPerson.imageUrl, frameBase64, targetPerson.lastSeenClothing);
         handleScanResult(analysis, targetPerson.id, "Static Image");
     } catch (e) {
         console.error(e);
@@ -149,10 +149,10 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
       // Capture
       const frameBase64 = captureFrame(video);
       if (frameBase64) {
-        setScanLog(prev => [`Scanning vector at ${new Date(currentTime * 1000).toISOString().substr(14, 5)}...`, ...prev]);
+        setScanLog(prev => [`Processing Frame ${new Date(currentTime * 1000).toISOString().substr(14, 5)}...`, ...prev]);
 
         try {
-            const analysis = await scanCrowdForMatch(targetPerson.imageUrl, frameBase64);
+            const analysis = await scanCrowdForMatch(targetPerson.imageUrl, frameBase64, targetPerson.lastSeenClothing);
             if (analysis.found && analysis.confidence > 75) {
                 handleScanResult(analysis, targetPerson.id, new Date(currentTime * 1000).toISOString().substr(14, 5));
                 setScanning(false);
@@ -186,10 +186,11 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
             confidence: analysis.confidence,
             description: analysis.explanation,
             timestamp: new Date().toLocaleTimeString(),
-            locationContext: timestamp
+            locationContext: timestamp,
+            boundingBox: analysis.box_2d
         });
         onUpdatePersonStatus(personId, 'FOUND');
-        setScanLog(prev => ["TARGET IDENTIFIED POSITIVE MATCH", ...prev]);
+        setScanLog(prev => [`MATCH CONFIRMED: ${analysis.confidence}% Confidence`, ...prev]);
       } else {
         setResult({
             found: false,
@@ -201,19 +202,34 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
       }
   };
 
+  // Render Bounding Box Style
+  const getBoundingBoxStyle = () => {
+    if (!result?.boundingBox) return {};
+    const [ymin, xmin, ymax, xmax] = result.boundingBox;
+    return {
+        top: `${ymin / 10}%`,
+        left: `${xmin / 10}%`,
+        height: `${(ymax - ymin) / 10}%`,
+        width: `${(xmax - xmin) / 10}%`,
+    };
+  };
+
+  // Helper to get selected person
+  const activePerson = people.find(p => p.id === selectedPersonId);
+
   return (
-    <div className="p-6 lg:p-10 w-full h-full flex flex-col overflow-hidden">
+    <div className="p-6 lg:p-8 w-full">
         {/* Header */}
-        <div className="flex justify-between items-end mb-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
             <div>
                 <h1 className="text-3xl font-bold text-white flex items-center gap-3">
                     <ScanEye className="text-neon-blue w-8 h-8" />
                     Active Surveillance
                 </h1>
-                <p className="text-slate-400 mt-2">Upload security footage or images for AI vector analysis.</p>
+                <p className="text-slate-400 mt-2">Upload security footage or images for AI biometric analysis.</p>
             </div>
             
-            <div className="bg-slate-900 px-4 py-2 rounded-lg border border-slate-800 text-right">
+            <div className="bg-slate-900 px-4 py-2 rounded-lg border border-slate-800 text-right shrink-0">
                 <p className="text-xs text-slate-500 uppercase font-bold">Engine Status</p>
                 <div className="flex items-center justify-end gap-2">
                     <div className={`w-2 h-2 rounded-full ${scanning ? 'bg-neon-red animate-ping' : 'bg-neon-green'}`}></div>
@@ -222,16 +238,16 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
             </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 min-h-0">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
             
-            {/* LEFT PANEL: Controls (4 cols) */}
-            <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col h-full overflow-hidden">
+            {/* LEFT PANEL: Controls */}
+            <div className="xl:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-6 h-fit">
                 
                 {/* Target Selection */}
-                <div className="space-y-4 mb-6">
+                <div className="space-y-4">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                         <span className="bg-slate-800 w-5 h-5 flex items-center justify-center rounded-full text-white text-[10px]">1</span> 
-                        Select Target Vector
+                        Select Target Identity
                     </label>
                     <select 
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-neon-blue"
@@ -244,49 +260,61 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                         ))}
                     </select>
                     
-                    {selectedPersonId && (
-                        <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex gap-3 animate-in fade-in slide-in-from-top-2">
-                             <img 
-                                src={people.find(p => p.id === selectedPersonId)?.imageUrl} 
-                                className="w-16 h-16 rounded-md object-cover border border-neon-blue/50"
-                                alt="Target"
-                            />
-                            <div>
-                                <p className="text-sm font-bold text-white">{people.find(p => p.id === selectedPersonId)?.name}</p>
-                                <p className="text-xs text-slate-400 mt-1">ID: {people.find(p => p.id === selectedPersonId)?.id.slice(0,8)}</p>
-                                <div className="flex items-center gap-1 mt-1 text-[10px] text-neon-blue">
-                                    <Crosshair className="w-3 h-3" /> Vector Ready
+                    {activePerson && (
+                        <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 animate-in fade-in slide-in-from-top-2 space-y-3">
+                            <div className="flex gap-3">
+                                <img 
+                                    src={activePerson.imageUrl} 
+                                    className="w-16 h-16 rounded-md object-cover border border-neon-blue/50"
+                                    alt="Target"
+                                />
+                                <div>
+                                    <p className="text-sm font-bold text-white">{activePerson.name}</p>
+                                    <p className="text-xs text-slate-400 mt-1">ID: {activePerson.id.slice(0,8)}</p>
+                                    <div className="flex items-center gap-1 mt-1 text-[10px] text-neon-blue">
+                                        <Crosshair className="w-3 h-3" /> Biometrics Loaded
+                                    </div>
                                 </div>
+                            </div>
+                            
+                            {/* Clothing Display */}
+                            <div className="bg-slate-900/50 p-2 rounded border border-slate-800">
+                                <p className="text-[10px] text-slate-500 uppercase font-bold mb-1 flex items-center gap-1">
+                                    <Shirt className="w-3 h-3" /> Last Seen Wearing
+                                </p>
+                                <p className="text-xs text-white font-medium leading-tight">
+                                    {activePerson.lastSeenClothing}
+                                </p>
                             </div>
                         </div>
                     )}
                 </div>
 
                 {/* Media Upload */}
-                <div className="space-y-4 mb-6">
+                <div className="space-y-4">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                          <span className="bg-slate-800 w-5 h-5 flex items-center justify-center rounded-full text-white text-[10px]">2</span>
-                        Source Media
+                        Source Footage
                     </label>
                     <div 
                         onClick={() => fileInputRef.current?.click()}
                         className={`
-                            border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group
+                            border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden
                             ${mediaUrl ? 'border-neon-blue bg-neon-blue/5' : 'border-slate-700 hover:border-neon-blue bg-slate-950'}
                         `}
                     >
                         {mediaType === 'video' ? (
-                            <Video className={`w-8 h-8 mb-2 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
+                            <Video className={`w-8 h-8 mb-2 relative z-10 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
                         ) : mediaType === 'image' ? (
-                            <ImageIcon className={`w-8 h-8 mb-2 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
+                            <ImageIcon className={`w-8 h-8 mb-2 relative z-10 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
                         ) : (
-                            <FileUp className="w-8 h-8 mb-2 text-slate-500 group-hover:text-neon-blue" />
+                            <FileUp className="w-8 h-8 mb-2 relative z-10 text-slate-500 group-hover:text-neon-blue" />
                         )}
                         
-                        <p className="text-sm text-slate-300 font-medium">
-                            {mediaUrl ? (mediaType === 'video' ? 'Video Loaded' : 'Image Loaded') : 'Upload Video or Image'}
+                        <p className="text-sm text-slate-300 font-medium relative z-10">
+                            {mediaUrl ? (mediaType === 'video' ? 'Video Loaded' : 'Image Loaded') : 'Upload Media'}
                         </p>
-                        <p className="text-xs text-slate-500 mt-1">MP4, WebM, JPG, PNG</p>
+                        <p className="text-xs text-slate-500 mt-1 relative z-10">MP4, JPG, PNG</p>
                         <input 
                             ref={fileInputRef}
                             type="file"
@@ -301,39 +329,39 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                 <button
                     onClick={runScan}
                     disabled={!selectedPersonId || !mediaUrl || scanning}
-                    className="w-full bg-neon-blue disabled:bg-slate-800 disabled:text-slate-500 hover:bg-blue-500 text-white font-bold py-4 rounded-lg transition-all shadow-[0_0_20px_rgba(14,165,233,0.3)] hover:shadow-[0_0_30px_rgba(14,165,233,0.5)] flex items-center justify-center gap-2"
+                    className="w-full bg-neon-blue disabled:bg-slate-800 disabled:text-slate-500 hover:bg-blue-500 text-white font-bold py-4 rounded-lg transition-all shadow-[0_0_20px_rgba(14,165,233,0.3)] hover:shadow-[0_0_30px_rgba(14,165,233,0.5)] flex items-center justify-center gap-2 shrink-0"
                 >
                     {scanning ? <Loader2 className="animate-spin" /> : <Play className="fill-current" />}
-                    {scanning ? 'ANALYZING MEDIA...' : 'INITIATE SCAN'}
+                    {scanning ? 'SCANNING...' : 'INITIATE SEARCH'}
                 </button>
 
-                {/* Scan Log Terminal */}
-                <div className="mt-6 flex-1 bg-black rounded-lg p-4 border border-slate-800 font-mono text-xs overflow-y-auto custom-scrollbar">
-                    <div className="text-slate-500 mb-2">/// SYSTEM LOG ///</div>
+                {/* Scan Log Terminal - Fixed Height with Internal Scroll */}
+                <div className="h-64 bg-black rounded-lg p-4 border border-slate-800 font-mono text-xs overflow-y-auto custom-scrollbar shadow-inner shrink-0">
+                    <div className="text-slate-500 mb-2 border-b border-slate-800 pb-1 sticky top-0 bg-black">/// SYSTEM LOG ///</div>
                     {scanLog.length === 0 && <span className="text-slate-700">Waiting for command...</span>}
                     {scanLog.map((log, i) => (
-                        <div key={i} className={`mb-1 ${i === 0 ? 'text-neon-blue' : 'text-slate-500'}`}>
+                        <div key={i} className={`mb-1 font-mono ${i === 0 ? 'text-neon-blue' : 'text-slate-500'}`}>
                             &gt; {log}
                         </div>
                     ))}
                 </div>
             </div>
 
-            {/* RIGHT PANEL: Visualization (8 cols) */}
-            <div className="lg:col-span-8 bg-black rounded-2xl border border-slate-800 relative overflow-hidden flex flex-col shadow-2xl">
+            {/* RIGHT PANEL: Visualization */}
+            <div className="xl:col-span-2 bg-black rounded-2xl border border-slate-800 relative overflow-hidden flex flex-col shadow-2xl min-h-[500px]">
                 
                 {/* Display Container */}
-                <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
+                <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden group w-full">
                     {/* Grid Overlay */}
                     <div className="absolute inset-0 bg-[linear-gradient(rgba(14,165,233,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(14,165,233,0.05)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none z-10" />
                     
                     {mediaUrl ? (
-                        <>
+                        <div className="relative w-full h-full flex justify-center items-center p-4">
                             {mediaType === 'video' ? (
                                 <video 
                                     ref={videoRef}
                                     src={mediaUrl} 
-                                    className="max-w-full max-h-full z-0"
+                                    className="max-w-full max-h-full shadow-2xl z-0"
                                     controls={!scanning}
                                     playsInline
                                 />
@@ -345,20 +373,34 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                                     alt="Scan source"
                                 />
                             )}
+
+                            {/* TARGET BOUNDING BOX OVERLAY */}
+                            {!scanning && result?.found && result.boundingBox && (
+                                <div 
+                                    className="absolute border-2 border-neon-green bg-neon-green/20 z-20 shadow-[0_0_30px_rgba(16,185,129,0.5)] animate-pulse"
+                                    style={getBoundingBoxStyle()}
+                                >
+                                    {/* Corner Brackets for Tech Look */}
+                                    <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-neon-green"></div>
+                                    <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-neon-green"></div>
+                                    <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-neon-green"></div>
+                                    <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-neon-green"></div>
+                                    
+                                    {/* Label */}
+                                    <div className="absolute -top-8 left-0 bg-neon-green text-black text-[10px] font-bold px-2 py-1 rounded-t flex items-center gap-1">
+                                        <Target className="w-3 h-3" />
+                                        {(result.confidence * 100).toFixed(0)}% MATCH
+                                    </div>
+                                </div>
+                            )}
                             
                             {/* Scanning HUD Overlay */}
                             {scanning && (
-                                <div className="absolute inset-0 z-20 pointer-events-none">
+                                <div className="absolute inset-0 z-20 pointer-events-none w-full h-full">
                                     {/* Scanning Bar */}
                                     <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-transparent via-neon-blue/10 to-transparent animate-scan"></div>
                                     <div className="absolute top-0 left-0 w-full h-1 bg-neon-blue/50 shadow-[0_0_20px_#0ea5e9] animate-scan"></div>
                                     
-                                    {/* Corner Markers */}
-                                    <div className="absolute top-4 left-4 w-8 h-8 border-l-2 border-t-2 border-neon-blue"></div>
-                                    <div className="absolute top-4 right-4 w-8 h-8 border-r-2 border-t-2 border-neon-blue"></div>
-                                    <div className="absolute bottom-4 left-4 w-8 h-8 border-l-2 border-b-2 border-neon-blue"></div>
-                                    <div className="absolute bottom-4 right-4 w-8 h-8 border-r-2 border-b-2 border-neon-blue"></div>
-
                                     {/* Center Reticle */}
                                     <div className="absolute inset-0 flex items-center justify-center">
                                         <div className="w-64 h-64 border border-neon-blue/30 rounded-full animate-pulse-slow flex items-center justify-center">
@@ -369,61 +411,12 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                                     </div>
                                     
                                     {/* Info Badges */}
-                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 border border-neon-blue/50 text-neon-blue px-3 py-1 rounded font-mono text-sm">
-                                        {mediaType === 'video' ? `REC: ${currentScanTime}` : 'STATIC ANALYSIS'}
+                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 border border-neon-blue/50 text-neon-blue px-3 py-1 rounded font-mono text-sm backdrop-blur-md">
+                                        {mediaType === 'video' ? `FRAME: ${currentScanTime}` : 'PROCESSING BIOMETRICS'}
                                     </div>
                                 </div>
                             )}
-
-                            {/* Result Overlay - Success */}
-                            {!scanning && result?.found && (
-                                <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-500">
-                                    <div className="bg-slate-900 border border-green-500/50 rounded-2xl p-8 max-w-md text-center shadow-[0_0_50px_rgba(16,185,129,0.2)]">
-                                        <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                                            <CheckCircle className="w-10 h-10 text-green-500" />
-                                        </div>
-                                        <h2 className="text-2xl font-bold text-green-500 mb-2 tracking-wider">TARGET LOCATED</h2>
-                                        <p className="text-slate-300 mb-6">{result.description}</p>
-                                        
-                                        <div className="grid grid-cols-2 gap-4 mb-6">
-                                            <div className="bg-black/30 p-3 rounded-lg">
-                                                <div className="text-xs text-slate-500 uppercase">Confidence</div>
-                                                <div className="text-xl font-mono text-green-400">{result.confidence}%</div>
-                                            </div>
-                                            <div className="bg-black/30 p-3 rounded-lg">
-                                                <div className="text-xs text-slate-500 uppercase">Timeline</div>
-                                                <div className="text-xl font-mono text-white">
-                                                    {result.locationContext || "N/A"}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <button onClick={() => setResult(null)} className="text-sm text-slate-400 hover:text-white underline">
-                                            Dismiss & Continue Scanning
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                            
-                            {/* Result Overlay - Not Found */}
-                            {!scanning && result && !result.found && (
-                                <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-500">
-                                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8 max-w-md text-center">
-                                        <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
-                                            <AlertCircle className="w-8 h-8 text-slate-400" />
-                                        </div>
-                                        <h2 className="text-xl font-bold text-white mb-2">Negative Result</h2>
-                                        <p className="text-slate-400 mb-6">The target was not found in this footage with sufficient confidence.</p>
-                                        <button 
-                                            onClick={() => setResult(null)} 
-                                            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white text-sm transition-colors"
-                                        >
-                                            Close Report
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </>
+                        </div>
                     ) : (
                         <div className="text-center space-y-4 opacity-50">
                             <Video className="w-20 h-20 mx-auto text-slate-700" />
@@ -433,15 +426,15 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                 </div>
 
                 {/* Bottom Status Bar */}
-                <div className="h-14 bg-slate-900 border-t border-slate-800 flex items-center px-6 gap-6">
+                <div className="h-14 bg-slate-900 border-t border-slate-800 flex items-center px-6 gap-6 shrink-0">
                     <div className="flex-1">
                         <div className="flex justify-between text-xs mb-1.5 font-mono">
-                            <span className="text-neon-blue">PROGRESS</span>
+                            <span className="text-neon-blue">ANALYSIS PROGRESS</span>
                             <span className="text-white">{scanProgress}%</span>
                         </div>
                         <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                             <div 
-                                className="h-full bg-neon-blue transition-all duration-300" 
+                                className="h-full bg-neon-blue transition-all duration-300 shadow-[0_0_10px_#0ea5e9]" 
                                 style={{ width: `${scanProgress}%` }}
                             />
                         </div>
@@ -451,12 +444,34 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                             <span>MODE: {mediaType ? mediaType.toUpperCase() : 'IDLE'}</span>
                             <span>AI: GEMINI 2.5</span>
                         </div>
-                        <div className="flex flex-col">
-                            <span>NET: SECURE</span>
-                            <span>LAT: {scanning ? '42ms' : '--'}</span>
-                        </div>
                     </div>
                 </div>
+
+                {/* Result Popover - Only shown if found */}
+                {!scanning && result?.found && (
+                     <div className="absolute bottom-20 right-6 z-30 bg-slate-900/90 backdrop-blur-md border border-green-500/50 rounded-xl p-4 w-80 shadow-2xl animate-in slide-in-from-right duration-500">
+                        <div className="flex items-start gap-3">
+                            <CheckCircle className="w-6 h-6 text-green-500 mt-1 shrink-0" />
+                            <div>
+                                <h3 className="text-green-500 font-bold mb-1">TARGET ACQUIRED</h3>
+                                <p className="text-xs text-slate-300 leading-relaxed">{result.description}</p>
+                                <div className="mt-2 flex gap-2">
+                                    <span className="text-[10px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded border border-green-500/20">
+                                        Conf: {result.confidence}%
+                                    </span>
+                                    {result.locationContext && (
+                                        <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
+                                            @{result.locationContext}
+                                        </span>
+                                    )}
+                                </div>
+                                <button onClick={() => setResult(null)} className="mt-3 text-xs text-slate-500 hover:text-white underline">
+                                    Dismiss
+                                </button>
+                            </div>
+                        </div>
+                     </div>
+                )}
 
                 {/* Hidden Canvas for Frame Extraction */}
                 <canvas ref={canvasRef} className="hidden" />

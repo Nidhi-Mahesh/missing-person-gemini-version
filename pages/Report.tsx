@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Person } from '../types';
-import { Upload, Loader2, Sparkles } from 'lucide-react';
+import { Upload, Loader2, Sparkles, Shirt } from 'lucide-react';
 import { analyzePersonImage } from '../services/geminiService';
 
 interface ReportProps {
@@ -17,6 +17,7 @@ export const Report: React.FC<ReportProps> = ({ onAddPerson }) => {
     age: '',
     lastSeenLocation: '',
     lastSeenDate: new Date().toISOString().split('T')[0],
+    lastSeenClothing: '',
     description: '',
   });
 
@@ -55,9 +56,9 @@ export const Report: React.FC<ReportProps> = ({ onAddPerson }) => {
   return (
     <div className="p-6 lg:p-10 w-full max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
       <h1 className="text-3xl font-bold text-white mb-2">Report Missing Person</h1>
-      <p className="text-slate-400 mb-8">Submit details to the centralized database. AI will auto-generate physical descriptors.</p>
+      <p className="text-slate-400 mb-8">Submit details to the centralized database. AI will extract facial biometrics automatically.</p>
 
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-8">
         {/* Image Section */}
         <div className="space-y-4">
           <div 
@@ -88,11 +89,14 @@ export const Report: React.FC<ReportProps> = ({ onAddPerson }) => {
             {loading && (
                 <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center">
                     <Loader2 className="w-10 h-10 text-neon-blue animate-spin mb-3" />
-                    <p className="text-neon-blue font-mono text-sm animate-pulse">Analyzing biometrics...</p>
+                    <p className="text-neon-blue font-mono text-sm animate-pulse">Extracting facial keypoints...</p>
                 </div>
             )}
           </div>
-          <p className="text-xs text-slate-500 text-center">Upload a clear, front-facing photo for best vector embedding results.</p>
+          <p className="text-xs text-slate-500 text-center">
+            Upload a clear photo. 
+            <span className="text-neon-red block mt-1">Note: The system will ignore the clothes in the photo. Please describe current clothing manually.</span>
+          </p>
         </div>
 
         {/* Details Section */}
@@ -142,9 +146,26 @@ export const Report: React.FC<ReportProps> = ({ onAddPerson }) => {
             />
           </div>
 
+          {/* New Clothing Field */}
+          <div className="space-y-2">
+             <label className="text-sm font-bold text-neon-blue flex items-center gap-2">
+                <Shirt className="w-4 h-4" />
+                Last Seen Wearing (Important)
+             </label>
+             <input 
+              required
+              type="text"
+              placeholder="e.g. Red Hoodie, Blue Jeans, White Sneakers"
+              className="w-full bg-slate-950 border border-neon-blue/30 rounded-lg p-3 text-white focus:border-neon-blue focus:ring-1 focus:ring-neon-blue outline-none transition-all placeholder:text-slate-600"
+              value={formData.lastSeenClothing}
+              onChange={e => setFormData({...formData, lastSeenClothing: e.target.value})}
+            />
+            <p className="text-[10px] text-slate-500">This description will be used to filter crowd footage.</p>
+          </div>
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-slate-400">Physical Description</label>
+                <label className="text-sm font-medium text-slate-400">Biometric Features (AI Extracted)</label>
                 {formData.description && !loading && (
                     <span className="text-[10px] text-neon-blue flex items-center gap-1 bg-neon-blue/10 px-2 py-0.5 rounded-full">
                         <Sparkles className="w-3 h-3" /> AI Generated
@@ -152,12 +173,11 @@ export const Report: React.FC<ReportProps> = ({ onAddPerson }) => {
                 )}
             </div>
             <textarea 
-              required
-              rows={4}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white focus:border-neon-blue focus:ring-1 focus:ring-neon-blue outline-none transition-all resize-none"
+              readOnly
+              rows={3}
+              className="w-full bg-slate-950/50 border border-slate-800 rounded-lg p-3 text-slate-400 focus:outline-none resize-none italic text-sm"
               value={formData.description}
-              onChange={e => setFormData({...formData, description: e.target.value})}
-              placeholder="Waiting for image analysis..."
+              placeholder="AI will populate physical characteristics from the image (hair, eyes, build) to aid identification..."
             />
           </div>
 

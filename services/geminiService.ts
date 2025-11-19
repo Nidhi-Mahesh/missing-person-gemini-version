@@ -9,6 +9,7 @@ const cleanBase64 = (b64: string) => b64.replace(/^data:image\/\w+;base64,/, "")
 
 /**
  * Generates a description of a person based on their image.
+ * IMPORTANT: Specifically ignores clothing to prevent bias from old photos.
  */
 export const analyzePersonImage = async (base64Image: string): Promise<string> => {
   try {
@@ -23,7 +24,7 @@ export const analyzePersonImage = async (base64Image: string): Promise<string> =
             }
           },
           {
-            text: "Describe the physical appearance of the person in this image for a missing person report. Focus on distinct features like hair color, clothing, age approximation, and glasses/accessories. Keep it under 50 words."
+            text: "Analyze the physical biometric features of this person for a missing person report. Describe ONLY: Hair color/style, eye color, facial structure, distinct facial marks, and physical build. DO NOT describe their clothing, as the photo may be old. Keep it under 40 words."
           }
         ]
       }
@@ -37,11 +38,13 @@ export const analyzePersonImage = async (base64Image: string): Promise<string> =
 
 /**
  * Compares a missing person's photo with a crowd frame/image.
+ * Enhanced to use the reported clothing description instead of the photo's clothes.
  */
 export const scanCrowdForMatch = async (
   targetPersonBase64: string,
-  crowdSceneBase64: string
-): Promise<{ found: boolean; confidence: number; explanation: string }> => {
+  crowdSceneBase64: string,
+  reportedClothing: string
+): Promise<{ found: boolean; confidence: number; explanation: string; box_2d?: [number, number, number, number] }> => {
   try {
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -60,16 +63,24 @@ export const scanCrowdForMatch = async (
             }
           },
           {
-            text: `You are a forensic search AI. 
-            Image 1 is the TARGET missing person. 
-            Image 2 is a CROWD SCENE or surveillance frame.
+            text: `Perform Forensic Person Re-Identification.
             
-            Task: Determine if the person in Image 1 is present in Image 2.
+            TARGET DEFINITION:
+            1. FACE/BIOMETRICS: Use the person in Image 1.
+            2. ATTIRE: The person is reported to be wearing: "${reportedClothing}".
             
-            Return a JSON object with:
-            - "found": boolean
-            - "confidence": number (0 to 100)
-            - "explanation": string (Brief reasoning).
+            SEARCH TASK (Image 2):
+            Scan Image 2 for a person matching the FACE from Image 1 AND the ATTIRE described above. 
+            
+            CRITICAL: 
+            - Ignore the clothes shown in Image 1. Only use Image 1 for facial features.
+            - Match against the "${reportedClothing}" description for the body.
+            
+            Output JSON:
+            - "found": boolean (true if confidence > 75%)
+            - "confidence": number (0-100)
+            - "explanation": string (Explain the match based on Face + Reported Clothing).
+            - "box_2d": number[] (Bounding box [ymin, xmin, ymax, xmax] 0-1000 scale. Null if not found).
             `
           }
         ]
@@ -81,7 +92,13 @@ export const scanCrowdForMatch = async (
             properties: {
                 found: { type: Type.BOOLEAN },
                 confidence: { type: Type.NUMBER },
-                explanation: { type: Type.STRING }
+                explanation: { type: Type.STRING },
+                box_2d: { 
+                  type: Type.ARRAY, 
+                  items: { type: Type.NUMBER },
+                  description: "Bounding box [ymin, xmin, ymax, xmax] on 0-1000 scale",
+                  nullable: true
+                }
             },
             required: ["found", "confidence", "explanation"]
         }
@@ -99,7 +116,7 @@ export const scanCrowdForMatch = async (
     return {
       found: false,
       confidence: 0,
-      explanation: "Error processing the scan request. Please try a clearer image."
+      explanation: "Signal interference. Unable to process biometric data.",
     };
   }
 };

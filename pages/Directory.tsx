@@ -1,6 +1,6 @@
 import React from 'react';
 import { Person } from '../types';
-import { MapPin, Calendar, User } from 'lucide-react';
+import { MapPin, Calendar, User, Shirt } from 'lucide-react';
 
 interface DirectoryProps {
   people: Person[];
@@ -8,7 +8,7 @@ interface DirectoryProps {
 
 export const Directory: React.FC<DirectoryProps> = ({ people }) => {
   return (
-    <div className="p-6 lg:p-10 w-full h-full overflow-y-auto">
+    <div className="p-6 lg:p-10 w-full">
       <header className="flex justify-between items-center mb-8">
         <div>
             <h1 className="text-3xl font-bold text-white mb-2">Directory</h1>
@@ -62,11 +62,15 @@ export const Directory: React.FC<DirectoryProps> = ({ people }) => {
                         <Calendar className="w-4 h-4 text-neon-blue shrink-0" />
                         <span>{person.lastSeenDate}</span>
                     </div>
+                    <div className="flex items-center gap-2 text-sm text-slate-300">
+                        <Shirt className="w-4 h-4 text-neon-blue shrink-0" />
+                        <span>{person.lastSeenClothing}</span>
+                    </div>
                 </div>
 
                 <div className="pt-4 border-t border-slate-800">
                     <p className="text-xs text-slate-500 line-clamp-2 italic">
-                        "{person.description}"
+                        "Biometrics: {person.description}"
                     </p>
                 </div>
               </div>
