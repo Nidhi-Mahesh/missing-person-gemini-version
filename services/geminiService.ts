@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { Person } from "../types";
 
 // Initialize Gemini
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -37,60 +38,73 @@ export const analyzePersonImage = async (base64Image: string): Promise<string> =
 };
 
 /**
- * Compares a missing person's photo with a crowd frame/image.
- * Enhanced to use the reported clothing description instead of the photo's clothes.
+ * BATCH SCAN: Checks a crowd scene against MULTIPLE missing persons.
  */
-export const scanCrowdForMatch = async (
-  targetPersonBase64: string,
-  crowdSceneBase64: string,
-  reportedClothing: string
-): Promise<{ found: boolean; confidence: number; explanation: string; box_2d?: [number, number, number, number] }> => {
+export const scanCrowdForBatch = async (
+  missingPeople: Person[],
+  crowdSceneBase64: string
+): Promise<{ found: boolean; personId?: string; confidence: number; explanation: string; box_2d?: [number, number, number, number] }> => {
   try {
+    if (missingPeople.length === 0) {
+        return { found: false, confidence: 0, explanation: "No active missing person records to check against." };
+    }
+
+    // 1. Construct the Prompt Parts
+    // We start with the Crowd Scene
+    const promptParts: any[] = [
+        { text: "CRITICAL TASK: Analyze this Crowd Scene (Image 1) and check if ANY of the Reference Persons (Images below) are present." },
+        { 
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: cleanBase64(crowdSceneBase64)
+            }
+        },
+        { text: "--- REFERENCE DATABASE BELOW ---" }
+    ];
+
+    // 2. Add each Missing Person as a Reference
+    missingPeople.forEach((person, index) => {
+        promptParts.push({
+            text: `REFERENCE PERSON #${index + 1} (ID: ${person.id}):
+            - Name: ${person.name}
+            - Reported Clothing: "${person.lastSeenClothing}"
+            - Biometrics: "${person.description}"
+            - Reference Photo:`
+        });
+        promptParts.push({
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: cleanBase64(person.imageUrl)
+            }
+        });
+    });
+
+    // 3. Add Final Instruction
+    promptParts.push({
+        text: `INSTRUCTIONS:
+        1. Compare faces in the Crowd Scene against ALL Reference Photos.
+        2. Also check if the person matches the "Reported Clothing" description provided for that ID.
+        3. If a high-confidence match is found for ANY person, return their ID.
+        
+        Output JSON Schema:
+        - "found": boolean
+        - "personId": string (The ID of the matched person. Null if none found).
+        - "confidence": number (0-100)
+        - "explanation": string (Who was found and why?)
+        - "box_2d": number[] (Bounding box [ymin, xmin, ymax, xmax] 0-1000 scale of the person in the Crowd Scene).
+        `
+    });
+
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: cleanBase64(targetPersonBase64)
-            }
-          },
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: cleanBase64(crowdSceneBase64)
-            }
-          },
-          {
-            text: `Perform Forensic Person Re-Identification.
-            
-            TARGET DEFINITION:
-            1. FACE/BIOMETRICS: Use the person in Image 1.
-            2. ATTIRE: The person is reported to be wearing: "${reportedClothing}".
-            
-            SEARCH TASK (Image 2):
-            Scan Image 2 for a person matching the FACE from Image 1 AND the ATTIRE described above. 
-            
-            CRITICAL: 
-            - Ignore the clothes shown in Image 1. Only use Image 1 for facial features.
-            - Match against the "${reportedClothing}" description for the body.
-            
-            Output JSON:
-            - "found": boolean (true if confidence > 75%)
-            - "confidence": number (0-100)
-            - "explanation": string (Explain the match based on Face + Reported Clothing).
-            - "box_2d": number[] (Bounding box [ymin, xmin, ymax, xmax] 0-1000 scale. Null if not found).
-            `
-          }
-        ]
-      },
+      contents: { parts: promptParts },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
             type: Type.OBJECT,
             properties: {
                 found: { type: Type.BOOLEAN },
+                personId: { type: Type.STRING, nullable: true },
                 confidence: { type: Type.NUMBER },
                 explanation: { type: Type.STRING },
                 box_2d: { 
@@ -112,11 +126,11 @@ export const scanCrowdForMatch = async (
     return result;
 
   } catch (error) {
-    console.error("Gemini Scan Error:", error);
+    console.error("Gemini Batch Scan Error:", error);
     return {
       found: false,
       confidence: 0,
-      explanation: "Signal interference. Unable to process biometric data.",
+      explanation: "Processing error or signal interruption.",
     };
   }
 };

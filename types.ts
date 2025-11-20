@@ -13,6 +13,7 @@ export interface Person {
 
 export interface MatchResult {
   found: boolean;
+  personId?: string; // ID of the matched person in a batch scan
   confidence: number;
   description: string;
   timestamp: string;
