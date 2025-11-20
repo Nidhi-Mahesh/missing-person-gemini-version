@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Person, MatchResult } from '../types';
-import { ScanEye, Video, Image as ImageIcon, AlertCircle, CheckCircle, Loader2, Play, Pause, Crosshair, FileUp, Target, Shirt } from 'lucide-react';
+import { ScanEye, Video, Image as ImageIcon, AlertCircle, CheckCircle, Loader2, Play, Pause, Crosshair, FileUp, Target, Shirt, Camera, StopCircle } from 'lucide-react';
 import { scanCrowdForMatch } from '../services/geminiService';
 
 interface ScanProps {
@@ -11,7 +11,7 @@ interface ScanProps {
 export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
   const [selectedPersonId, setSelectedPersonId] = useState<string>('');
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
-  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | 'stream' | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [currentScanTime, setCurrentScanTime] = useState("00:00");
@@ -20,20 +20,35 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const webcamRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const stopScanRef = useRef<boolean>(false); // Ref to signal stop
 
-  // Cleanup media URL on unmount or change
+  // Cleanup media URL and streams on unmount or change
   useEffect(() => {
     return () => {
       if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+      stopWebcam();
     };
-  }, [mediaUrl]);
+  }, []);
+
+  const stopWebcam = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (webcamRef.current) {
+      webcamRef.current.srcObject = null;
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    stopWebcam(); // Ensure webcam is off
     const url = URL.createObjectURL(file);
     setMediaUrl(url);
     setMediaType(file.type.startsWith('video/') ? 'video' : 'image');
@@ -41,6 +56,29 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
     setScanLog([]);
     setScanProgress(0);
     setCurrentScanTime("00:00");
+  };
+
+  const enableWebcam = async () => {
+    try {
+        if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+        setMediaUrl(null);
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        streamRef.current = stream;
+        
+        if (webcamRef.current) {
+            webcamRef.current.srcObject = stream;
+        }
+        
+        setMediaType('stream');
+        setResult(null);
+        setScanLog(["Webcam initialized. Ready for live surveillance."]);
+        setScanProgress(0);
+        setCurrentScanTime("LIVE");
+    } catch (err) {
+        console.error("Error accessing webcam:", err);
+        setScanLog(prev => ["Error: Could not access webcam.", ...prev]);
+    }
   };
 
   const captureFrame = (source: HTMLVideoElement | HTMLImageElement): string | null => {
@@ -61,33 +99,45 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
     return canvas.toDataURL('image/jpeg', 0.8);
   };
 
-  const runScan = async () => {
-    if (!selectedPersonId || !mediaUrl) return;
-    
-    const targetPerson = people.find(p => p.id === selectedPersonId);
-    if (!targetPerson) {
-        setScanLog(prev => ["Error: Target not found in database.", ...prev]);
-        return;
-    }
+  const toggleScan = async () => {
+      if (scanning) {
+          // Stop command
+          stopScanRef.current = true;
+          setScanning(false);
+          setScanLog(prev => ["Scan aborted by user.", ...prev]);
+          return;
+      }
 
-    setScanning(true);
-    setResult(null);
-    setScanLog(prev => ["Initializing Biometric Vector Analysis...", ...prev]);
-    setScanLog(prev => [`Target Attire Protocol: "${targetPerson.lastSeenClothing}"`, ...prev]);
+      // Start command
+      if (!selectedPersonId) return;
+      if (mediaType === 'stream' && !streamRef.current) return;
+      if (mediaType !== 'stream' && !mediaUrl) return;
 
-    if (mediaType === 'image') {
-        await runImageScan(targetPerson);
-    } else if (mediaType === 'video') {
-        await runVideoScan(targetPerson);
-    }
+      const targetPerson = people.find(p => p.id === selectedPersonId);
+      if (!targetPerson) {
+          setScanLog(prev => ["Error: Target not found in database.", ...prev]);
+          return;
+      }
+
+      setScanning(true);
+      stopScanRef.current = false;
+      setResult(null);
+      setScanLog(prev => ["Initializing Biometric Vector Analysis...", ...prev]);
+      setScanLog(prev => [`Target Attire Protocol: "${targetPerson.lastSeenClothing}"`, ...prev]);
+
+      if (mediaType === 'image') {
+          await runImageScan(targetPerson);
+      } else if (mediaType === 'video') {
+          await runVideoScan(targetPerson);
+      } else if (mediaType === 'stream') {
+          await runWebcamScan(targetPerson);
+      }
   };
 
   const runImageScan = async (targetPerson: Person) => {
     if (!imageRef.current) return;
 
     setScanLog(prev => ["Analyzing static image frame for keypoints...", ...prev]);
-    
-    // Small delay to ensure UI renders
     await new Promise(r => setTimeout(r, 500));
 
     const frameBase64 = captureFrame(imageRef.current);
@@ -126,27 +176,22 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
     video.pause();
     video.currentTime = 0;
     
-    // Loop through video
     while (currentTime < duration) {
-      // Check if user stopped scan (not implemented yet) or result found
-      if (!videoRef.current) break; // Component unmounted
+      if (stopScanRef.current) break;
+      if (!videoRef.current) break;
 
-      // Seek
       video.currentTime = currentTime;
       setCurrentScanTime(new Date(currentTime * 1000).toISOString().substr(14, 5));
       
-      // Wait for seek to complete
       await new Promise<void>(resolve => {
           const onSeeked = () => {
               video.removeEventListener('seeked', onSeeked);
               resolve();
           };
           video.addEventListener('seeked', onSeeked);
-          // Fallback in case seek event doesn't fire quickly
           setTimeout(resolve, 800); 
       });
 
-      // Capture
       const frameBase64 = captureFrame(video);
       if (frameBase64) {
         setScanLog(prev => [`Processing Frame ${new Date(currentTime * 1000).toISOString().substr(14, 5)}...`, ...prev]);
@@ -156,27 +201,62 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
             if (analysis.found && analysis.confidence > 75) {
                 handleScanResult(analysis, targetPerson.id, new Date(currentTime * 1000).toISOString().substr(14, 5));
                 setScanning(false);
-                return; // Stop on find
+                return;
             }
         } catch (e) {
             console.error("Frame error", e);
         }
       }
 
-      // Update progress
       setScanProgress(Math.min(Math.round((currentTime / duration) * 100), 99));
       currentTime += interval;
     }
 
     setScanning(false);
-    setScanProgress(100);
-    setScanLog(prev => ["Scan complete. Target not found in media.", ...prev]);
-    setResult({
-        found: false,
-        confidence: 0,
-        description: "Deep scan completed. No matching vector signatures found.",
-        timestamp: new Date().toLocaleTimeString(),
-    });
+    if (!stopScanRef.current) {
+        setScanProgress(100);
+        setScanLog(prev => ["Scan complete. Target not found.", ...prev]);
+    }
+  };
+
+  const runWebcamScan = async (targetPerson: Person) => {
+      if (!webcamRef.current) return;
+      
+      let scanCount = 0;
+
+      while (true) {
+          if (stopScanRef.current) break;
+          if (!webcamRef.current) break;
+
+          // Capture
+          const frameBase64 = captureFrame(webcamRef.current);
+          if (frameBase64) {
+              const timeStamp = new Date().toLocaleTimeString();
+              setScanLog(prev => [`Live Analysis [${timeStamp}]...`, ...prev]);
+
+              try {
+                  const analysis = await scanCrowdForMatch(targetPerson.imageUrl, frameBase64, targetPerson.lastSeenClothing);
+                  
+                  if (analysis.found && analysis.confidence > 75) {
+                      handleScanResult(analysis, targetPerson.id, "LIVE FEED");
+                      setScanning(false);
+                      return; // Stop loop on find
+                  } else {
+                      // Log negative result occasionally so we don't spam too much? 
+                      // Or just rely on the spinner.
+                  }
+              } catch (e) {
+                  console.error("Webcam frame error", e);
+              }
+          }
+
+          // Wait 2 seconds before next frame
+          scanCount++;
+          setScanProgress((scanCount % 10) * 10); // Fake progress pulse
+          await new Promise(r => setTimeout(r, 2000));
+      }
+
+      setScanning(false);
   };
 
   const handleScanResult = (analysis: any, personId: string, timestamp: string) => {
@@ -202,7 +282,6 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
       }
   };
 
-  // Render Bounding Box Style
   const getBoundingBoxStyle = () => {
     if (!result?.boundingBox) return {};
     const [ymin, xmin, ymax, xmax] = result.boundingBox;
@@ -214,7 +293,6 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
     };
   };
 
-  // Helper to get selected person
   const activePerson = people.find(p => p.id === selectedPersonId);
 
   return (
@@ -226,14 +304,14 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                     <ScanEye className="text-neon-blue w-8 h-8" />
                     Active Surveillance
                 </h1>
-                <p className="text-slate-400 mt-2">Upload security footage or images for AI biometric analysis.</p>
+                <p className="text-slate-400 mt-2">Real-time biometric vector matching engine.</p>
             </div>
             
             <div className="bg-slate-900 px-4 py-2 rounded-lg border border-slate-800 text-right shrink-0">
                 <p className="text-xs text-slate-500 uppercase font-bold">Engine Status</p>
                 <div className="flex items-center justify-end gap-2">
                     <div className={`w-2 h-2 rounded-full ${scanning ? 'bg-neon-red animate-ping' : 'bg-neon-green'}`}></div>
-                    <p className="text-neon-blue font-mono">{scanning ? 'PROCESSING' : 'READY'}</p>
+                    <p className="text-neon-blue font-mono">{scanning ? 'ACTIVE SCANNING' : 'SYSTEM READY'}</p>
                 </div>
             </div>
         </div>
@@ -276,9 +354,7 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                                     </div>
                                 </div>
                             </div>
-                            
-                            {/* Clothing Display */}
-                            <div className="bg-slate-900/50 p-2 rounded border border-slate-800">
+                             <div className="bg-slate-900/50 p-2 rounded border border-slate-800">
                                 <p className="text-[10px] text-slate-500 uppercase font-bold mb-1 flex items-center gap-1">
                                     <Shirt className="w-3 h-3" /> Last Seen Wearing
                                 </p>
@@ -290,52 +366,88 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                     )}
                 </div>
 
-                {/* Media Upload */}
+                {/* Media Selection */}
                 <div className="space-y-4">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                          <span className="bg-slate-800 w-5 h-5 flex items-center justify-center rounded-full text-white text-[10px]">2</span>
-                        Source Footage
+                        Input Source
                     </label>
-                    <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className={`
-                            border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden
-                            ${mediaUrl ? 'border-neon-blue bg-neon-blue/5' : 'border-slate-700 hover:border-neon-blue bg-slate-950'}
-                        `}
-                    >
-                        {mediaType === 'video' ? (
-                            <Video className={`w-8 h-8 mb-2 relative z-10 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
-                        ) : mediaType === 'image' ? (
-                            <ImageIcon className={`w-8 h-8 mb-2 relative z-10 ${mediaUrl ? 'text-neon-blue' : 'text-slate-500 group-hover:text-neon-blue'}`} />
-                        ) : (
-                            <FileUp className="w-8 h-8 mb-2 relative z-10 text-slate-500 group-hover:text-neon-blue" />
-                        )}
-                        
-                        <p className="text-sm text-slate-300 font-medium relative z-10">
-                            {mediaUrl ? (mediaType === 'video' ? 'Video Loaded' : 'Image Loaded') : 'Upload Media'}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1 relative z-10">MP4, JPG, PNG</p>
-                        <input 
-                            ref={fileInputRef}
-                            type="file"
-                            accept="video/*,image/*" 
-                            className="hidden"
-                            onChange={handleFileSelect}
-                        />
+                    
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                        <button 
+                            onClick={() => { stopWebcam(); setMediaUrl(null); setMediaType(null); }}
+                            className={`text-xs py-2 rounded border transition-colors ${mediaType !== 'stream' ? 'bg-neon-blue/20 border-neon-blue text-neon-blue' : 'border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                        >
+                            Upload File
+                        </button>
+                        <button 
+                            onClick={enableWebcam}
+                            className={`text-xs py-2 rounded border transition-colors ${mediaType === 'stream' ? 'bg-neon-blue/20 border-neon-blue text-neon-blue' : 'border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                        >
+                            Live Camera
+                        </button>
                     </div>
+
+                    {mediaType === 'stream' ? (
+                         <div className="border-2 border-neon-blue bg-neon-blue/5 rounded-xl p-6 flex flex-col items-center justify-center h-32 animate-pulse">
+                            <Camera className="w-8 h-8 text-neon-blue mb-2" />
+                            <p className="text-sm text-neon-blue font-bold">Webcam Active</p>
+                            <p className="text-[10px] text-slate-400">Streaming live feed...</p>
+                        </div>
+                    ) : (
+                        <div 
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`
+                                border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden h-32
+                                ${mediaUrl ? 'border-neon-blue bg-neon-blue/5' : 'border-slate-700 hover:border-neon-blue bg-slate-950'}
+                            `}
+                        >
+                            {mediaUrl && mediaType === 'video' ? (
+                                <Video className="w-8 h-8 mb-2 text-neon-blue" />
+                            ) : mediaUrl && mediaType === 'image' ? (
+                                <ImageIcon className="w-8 h-8 mb-2 text-neon-blue" />
+                            ) : (
+                                <FileUp className="w-8 h-8 mb-2 text-slate-500 group-hover:text-neon-blue" />
+                            )}
+                            
+                            <p className="text-sm text-slate-300 font-medium">
+                                {mediaUrl ? (mediaType === 'video' ? 'Video Ready' : 'Image Ready') : 'Drop File / Click'}
+                            </p>
+                            <input 
+                                ref={fileInputRef}
+                                type="file"
+                                accept="video/*,image/*" 
+                                className="hidden"
+                                onChange={handleFileSelect}
+                            />
+                        </div>
+                    )}
                 </div>
 
                 {/* Action Button */}
                 <button
-                    onClick={runScan}
-                    disabled={!selectedPersonId || !mediaUrl || scanning}
-                    className="w-full bg-neon-blue disabled:bg-slate-800 disabled:text-slate-500 hover:bg-blue-500 text-white font-bold py-4 rounded-lg transition-all shadow-[0_0_20px_rgba(14,165,233,0.3)] hover:shadow-[0_0_30px_rgba(14,165,233,0.5)] flex items-center justify-center gap-2 shrink-0"
+                    onClick={toggleScan}
+                    disabled={(!selectedPersonId || (!mediaUrl && mediaType !== 'stream')) && !scanning}
+                    className={`
+                        w-full font-bold py-4 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2 shrink-0
+                        ${scanning 
+                            ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' 
+                            : 'bg-neon-blue hover:bg-blue-500 text-white shadow-neon-blue/20 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none'}
+                    `}
                 >
-                    {scanning ? <Loader2 className="animate-spin" /> : <Play className="fill-current" />}
-                    {scanning ? 'SCANNING...' : 'INITIATE SEARCH'}
+                    {scanning ? (
+                        <>
+                            <StopCircle className="fill-current" /> STOP SCAN
+                        </>
+                    ) : (
+                        <>
+                            {mediaType === 'stream' ? <Camera className="fill-current" /> : <Play className="fill-current" />}
+                            INITIATE SEARCH
+                        </>
+                    )}
                 </button>
 
-                {/* Scan Log Terminal - Fixed Height with Internal Scroll */}
+                {/* Log */}
                 <div className="h-64 bg-black rounded-lg p-4 border border-slate-800 font-mono text-xs overflow-y-auto custom-scrollbar shadow-inner shrink-0">
                     <div className="text-slate-500 mb-2 border-b border-slate-800 pb-1 sticky top-0 bg-black">/// SYSTEM LOG ///</div>
                     {scanLog.length === 0 && <span className="text-slate-700">Waiting for command...</span>}
@@ -355,7 +467,21 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                     {/* Grid Overlay */}
                     <div className="absolute inset-0 bg-[linear-gradient(rgba(14,165,233,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(14,165,233,0.05)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none z-10" />
                     
-                    {mediaUrl ? (
+                    {mediaType === 'stream' ? (
+                        <div className="relative w-full h-full flex justify-center items-center bg-black">
+                             <video 
+                                ref={webcamRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="max-w-full max-h-full object-contain z-0 transform scale-x-[-1]" // Mirror effect for webcam
+                            />
+                            <div className="absolute top-4 right-4 flex items-center gap-2 px-3 py-1 bg-red-500/20 border border-red-500 rounded-full animate-pulse z-30">
+                                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                <span className="text-xs font-bold text-red-500">LIVE FEED</span>
+                            </div>
+                        </div>
+                    ) : mediaUrl ? (
                         <div className="relative w-full h-full flex justify-center items-center p-4">
                             {mediaType === 'video' ? (
                                 <video 
@@ -373,54 +499,54 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                                     alt="Scan source"
                                 />
                             )}
-
-                            {/* TARGET BOUNDING BOX OVERLAY */}
-                            {!scanning && result?.found && result.boundingBox && (
-                                <div 
-                                    className="absolute border-2 border-neon-green bg-neon-green/20 z-20 shadow-[0_0_30px_rgba(16,185,129,0.5)] animate-pulse"
-                                    style={getBoundingBoxStyle()}
-                                >
-                                    {/* Corner Brackets for Tech Look */}
-                                    <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-neon-green"></div>
-                                    <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-neon-green"></div>
-                                    <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-neon-green"></div>
-                                    <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-neon-green"></div>
-                                    
-                                    {/* Label */}
-                                    <div className="absolute -top-8 left-0 bg-neon-green text-black text-[10px] font-bold px-2 py-1 rounded-t flex items-center gap-1">
-                                        <Target className="w-3 h-3" />
-                                        {(result.confidence * 100).toFixed(0)}% MATCH
-                                    </div>
-                                </div>
-                            )}
-                            
-                            {/* Scanning HUD Overlay */}
-                            {scanning && (
-                                <div className="absolute inset-0 z-20 pointer-events-none w-full h-full">
-                                    {/* Scanning Bar */}
-                                    <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-transparent via-neon-blue/10 to-transparent animate-scan"></div>
-                                    <div className="absolute top-0 left-0 w-full h-1 bg-neon-blue/50 shadow-[0_0_20px_#0ea5e9] animate-scan"></div>
-                                    
-                                    {/* Center Reticle */}
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="w-64 h-64 border border-neon-blue/30 rounded-full animate-pulse-slow flex items-center justify-center">
-                                            <div className="w-56 h-56 border border-neon-blue/20 rounded-full"></div>
-                                            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-neon-blue/30"></div>
-                                            <div className="absolute top-0 left-1/2 w-[1px] h-full bg-neon-blue/30"></div>
-                                        </div>
-                                    </div>
-                                    
-                                    {/* Info Badges */}
-                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 border border-neon-blue/50 text-neon-blue px-3 py-1 rounded font-mono text-sm backdrop-blur-md">
-                                        {mediaType === 'video' ? `FRAME: ${currentScanTime}` : 'PROCESSING BIOMETRICS'}
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     ) : (
                         <div className="text-center space-y-4 opacity-50">
                             <Video className="w-20 h-20 mx-auto text-slate-700" />
-                            <p className="text-slate-500 font-mono uppercase tracking-widest">No Media Input</p>
+                            <p className="text-slate-500 font-mono uppercase tracking-widest">No Signal Input</p>
+                        </div>
+                    )}
+
+                    {/* TARGET BOUNDING BOX OVERLAY */}
+                    {!scanning && result?.found && result.boundingBox && (
+                        <div 
+                            className="absolute border-2 border-neon-green bg-neon-green/20 z-20 shadow-[0_0_30px_rgba(16,185,129,0.5)] animate-pulse"
+                            style={getBoundingBoxStyle()}
+                        >
+                            {/* Corner Brackets for Tech Look */}
+                            <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-neon-green"></div>
+                            <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-neon-green"></div>
+                            <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-neon-green"></div>
+                            <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-neon-green"></div>
+                            
+                            {/* Label */}
+                            <div className="absolute -top-8 left-0 bg-neon-green text-black text-[10px] font-bold px-2 py-1 rounded-t flex items-center gap-1">
+                                <Target className="w-3 h-3" />
+                                {result.confidence.toFixed(0)}% MATCH
+                            </div>
+                        </div>
+                    )}
+                            
+                    {/* Scanning HUD Overlay */}
+                    {scanning && (
+                        <div className="absolute inset-0 z-20 pointer-events-none w-full h-full">
+                            {/* Scanning Bar */}
+                            <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-transparent via-neon-blue/10 to-transparent animate-scan"></div>
+                            <div className="absolute top-0 left-0 w-full h-1 bg-neon-blue/50 shadow-[0_0_20px_#0ea5e9] animate-scan"></div>
+                            
+                            {/* Center Reticle */}
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-64 h-64 border border-neon-blue/30 rounded-full animate-pulse-slow flex items-center justify-center">
+                                    <div className="w-56 h-56 border border-neon-blue/20 rounded-full"></div>
+                                    <div className="absolute top-1/2 left-0 w-full h-[1px] bg-neon-blue/30"></div>
+                                    <div className="absolute top-0 left-1/2 w-[1px] h-full bg-neon-blue/30"></div>
+                                </div>
+                            </div>
+                            
+                            {/* Info Badges */}
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 border border-neon-blue/50 text-neon-blue px-3 py-1 rounded font-mono text-sm backdrop-blur-md">
+                                {mediaType === 'stream' ? `LIVE ANALYSIS` : mediaType === 'video' ? `FRAME: ${currentScanTime}` : 'PROCESSING IMAGE'}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -430,7 +556,7 @@ export const Scan: React.FC<ScanProps> = ({ people, onUpdatePersonStatus }) => {
                     <div className="flex-1">
                         <div className="flex justify-between text-xs mb-1.5 font-mono">
                             <span className="text-neon-blue">ANALYSIS PROGRESS</span>
-                            <span className="text-white">{scanProgress}%</span>
+                            <span className="text-white">{mediaType === 'stream' ? 'CONTINUOUS' : `${scanProgress}%`}</span>
                         </div>
                         <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                             <div 

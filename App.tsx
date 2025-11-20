@@ -5,35 +5,9 @@ import { Directory } from './pages/Directory';
 import { Scan } from './pages/Scan';
 import { AppView, Person } from './types';
 
-// Mock Data to start with
-const MOCK_PEOPLE: Person[] = [
-  {
-    id: '1',
-    name: 'Sarah Jenkins',
-    age: '24',
-    lastSeenLocation: 'Central Station, Platform 4',
-    lastSeenDate: '2024-05-12',
-    lastSeenClothing: 'Red hoodie, blue denim jeans, white sneakers',
-    description: 'Female, long blonde hair, slim build.',
-    imageUrl: 'https://picsum.photos/id/64/400/400',
-    status: 'MISSING'
-  },
-  {
-    id: '2',
-    name: 'Michael Ross',
-    age: '45',
-    lastSeenLocation: 'Downtown Park Entrance',
-    lastSeenDate: '2024-05-10',
-    lastSeenClothing: 'Grey suit jacket, black trousers, glasses',
-    description: 'Male, short dark hair, beard, average build.',
-    imageUrl: 'https://picsum.photos/id/91/400/400',
-    status: 'FOUND'
-  }
-];
-
 const App: React.FC = () => {
   const [currentView, setView] = useState<AppView>(AppView.SCAN);
-  const [people, setPeople] = useState<Person[]>(MOCK_PEOPLE);
+  const [people, setPeople] = useState<Person[]>([]);
 
   const handleAddPerson = (person: Person) => {
     setPeople([person, ...people]);
