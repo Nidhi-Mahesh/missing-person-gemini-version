@@ -33,6 +33,7 @@ const App: React.FC = () => {
   };
 
   return (
+    
     <div className="flex h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
       {/* Fixed Sidebar */}
       <Navbar currentView={currentView} setView={setView} />
@@ -50,5 +51,6 @@ const App: React.FC = () => {
     </div>
   );
 };
+
 
 export default App;
